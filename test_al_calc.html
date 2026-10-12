@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>废铝配料&价值计算器（双模型新版｜模型2更新Cu+Fe规则）</title>
+<style>
+*{box-sizing:border-box;font-family:system-ui, sans-serif;}
+body{padding:16px;max-width:1600px;margin:0 auto;background:#f7f7f7}
+.card{background:#fff;padding:16px;border-radius:10px;margin-bottom:12px;box-shadow:0 1px 4px #00000018}
+/* 行情行：6列 */
+.row3{display:grid;grid-template-columns: repeat(6, minmax(140px, 1fr));gap:10px;margin:8px 0;}
+/* 金属行情：6列 */
+.row2{display:grid;grid-template-columns: repeat(6, minmax(140px, 1fr));gap:8px;margin:8px 0;}
+/* 原料录入行 */
+.row{display:grid;
+grid-template-columns: 60px 90px 80px 80px 80px 80px 80px 80px 110px;
+gap:6px;margin:8px 0;align-items:center;
+}
+input,select{padding:7px;border:1px solid #ccc;border-radius:4px;width:100%;}
+button{padding:8px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;margin:4px 2px;}
+button#clear{background:#666}
+#result{white-space:pre-wrap;padding:10px;background:#0f172a;color:#39ff14;border-radius:8px;font-family:consolas;margin-top:8px;min-height:120px;}
+#resultMetal{white-space:pre-wrap;padding:10px;background:#112233;color:#66ffdd;border-radius:8px;font-family:consolas;margin-top:10px;min-height:120px;}
+</style>
+</head>
+<body>
+<div class="card">
+<h3>📈 成品铝合金行情</h3>
+<div class="row3">
+<div>ADC12 <input id="p_adc12" placeholder="元/吨"></div>
+<div>A356 <input id="p_a356" placeholder="元/吨"></div>
+<div>ZL102 <input id="p_zl102" placeholder="元/吨"></div>
+<div>ZL104 <input id="p_zl104" placeholder="元/吨"></div>
+<div>ZL107 <input id="p_zl107" placeholder="元/吨"></div>
+<div>ZL111 <input id="p_zl111" placeholder="元/吨"></div>
+</div>
+<div style="margin-top:8px;">熔炼损耗成本：<input id="loss_cost" value="1000" style="width:160px;"> 元/吨（仅模型1使用）</div>
+<div style="margin-top:8px;"><input type="checkbox" id="useAlDilute"> <label for="useAlDilute">启用纯铝稀释杂质（Fe稀释，达标不罚款）</label></div>
+</div>
+<div class="card">
+<h3>🔬 基础金属行情（A00基准｜模型2【新计价规则】Cu更新）</h3>
+<div class="row2">
+<div>A00铝<input id="p_al" placeholder="元/吨"></div>
+<div>金属硅<input id="p_si" placeholder="元/吨"></div>
+<div>电解铜<input id="p_cu" placeholder="元/吨"></div>
+<div>金属镁<input id="p_mg" placeholder="元/吨"></div>
+<div>锌锭<input id="p_zn" placeholder="元/吨"></div>
+<div>金属锰<input id="p_mn" placeholder="元/吨"></div>
+</div>
+<button id="calcMetalBtn">✅【模型2】废铝原料底层价值（新计价规则）</button>
+<div id="resultMetal"></div>
+</div>
+<div class="card">
+<h3>🧱 原料库（录入多批废铝，勾选参与配料混合）</h3>
+<div class="row">
+<span>勾选</span><span>吨数</span><span>Si</span><span>Fe</span><span>Cu</span><span>Mn</span><span>Mg</span><span>Zn</span><span>采购价</span>
+</div>
+<div class="row">
+<input type="checkbox" class="use">
+<input class="ton" placeholder="吨">
+<input class="si" placeholder="Si%">
+<input class="fe" placeholder="Fe%">
+<input class="cu" placeholder="Cu%">
+<input class="mn" placeholder="Mn%">
+<input class="mg" placeholder="Mg%">
+<input class="zn" placeholder="Zn%">
+<input class="price" placeholder="元/吨">
+</div>
+<div class="row">
+<input type="checkbox" class="use">
+<input class="ton" placeholder="吨">
+<input class="si" placeholder="Si%">
+<input class="fe" placeholder="Fe%">
+<input class="cu" placeholder="Cu%">
+<input class="mn" placeholder="Mn%">
+<input class="mg" placeholder="Mg%">
+<input class="zn" placeholder="Zn%">
+<input class="price" placeholder="元/吨">
+</div>
+<div class="row">
+<input type="checkbox" class="use">
+<input class="ton" placeholder="吨">
+<input class="si" placeholder="Si%">
+<input class="fe" placeholder="Fe%">
+<input class="cu" placeholder="Cu%">
+<input class="mn" placeholder="Mn%">
+<input class="mg" placeholder="Mg%">
+<input class="zn" placeholder="Zn%">
+<input class="price" placeholder="元/吨">
+</div>
+<button id="addRow">+新增一行原料</button>
+</div>
+<div class="card">
+<h3>🎯【模型1｜质量守恒配料】目标牌号，测算成品毛利</h3>
+<select id="targetGrade" style="width:180px;">
+<option value="ADC12">ADC12</option>
+<option value="A356">A356</option>
+<option value="ZL102">ZL102</option>
+<option value="ZL104">ZL104</option>
+<option value="ZL107">ZL107</option>
+<option value="ZL111">ZL111</option>
+</select>
+<button id="calcBtn">✅开始配料&利润计算</button>
+<button id="clear">清空结果</button>
+<div id="result"></div>
+</div>
+<script>
+// =====牌号标准=====
+const gradeConfig = {
+    ADC12:{
+        si_min:9.6,si_max:12.0,fe_max:1.3,cu_max:1.5,mn_max:0.5,mg_max:0.3,zn_max:1.0,
+        rule:{fe_over:120,cu_over:160,mn_over:50,mg_over:220,zn_over:80}
+    },
+    A356:{
+        si_min:6.5,si_max:7.5,fe_max:0.2,cu_max:0.2,mn_max:0.1,mg_min:0.25,mg_max:0.45,zn_max:0.1,
+        rule:{fe_over:300,cu_over:260,mn_over:100,mg_over:200,zn_over:180}
+    },
+    ZL102:{
+        si_min:10.0,si_max:13.0,fe_max:1.5,cu_max:0.6,mn_max:0.6,mg_max:0.1,zn_max:0.3,
+        rule:{fe_over:100,cu_over:140,mn_over:40,mg_over:200,zn_over:70}
+    },
+    ZL104:{
+        si_min:8.0,si_max:10.5,fe_max:0.6,cu_max:0.3,mn_min:0.2,mn_max:0.5,mg_min:0.17,mg_max:0.3,zn_max:0.3,
+        rule:{fe_over:200,cu_over:180,mn_over:60,mg_over:200,zn_over:100}
+    },
+    ZL107:{
+        si_min:6.5,si_max:7.5,fe_max:0.6,cu_min:3.5,cu_max:4.5,mn_max:0.5,mg_max:0.1,zn_max:0.3,
+        rule:{fe_over:200,cu_over:180,cu_low:180,mn_over:60,mg_over:200,zn_over:100}
+    },
+    ZL111:{
+        si_min:7.5,si_max:8.5,fe_max:0.4,cu_min:1.3,cu_max:1.8,mn_max:0.5,mg_max:0.1,zn_max:0.2,
+        rule:{fe_over:240,cu_over:180,cu_low:200,mn_over:80,mg_over:220,zn_over:140}
+    }
+};
+// 获取勾选原料行
+function getRow(){
+    const rows=document.querySelectorAll(".row");
+    const data=[];
+    for(let r of rows){
+        const use=r.querySelector(".use");
+        if(!use||!use.checked) continue;
+        const ton=parseFloat(r.querySelector(".ton").value);
+        const si=parseFloat(r.querySelector(".si").value);
+        const fe=parseFloat(r.querySelector(".fe").value);
+        const cu=parseFloat(r.querySelector(".cu").value);
+        const mn=parseFloat(r.querySelector(".mn").value);
+        const mg=parseFloat(r.querySelector(".mg").value);
+        const zn=parseFloat(r.querySelector(".zn").value);
+        const price=parseFloat(r.querySelector(".price").value);
+        if(isNaN(ton)||ton<=0) continue;
+        data.push({ton,si,fe,cu,mn,mg,zn,price});
+    }
+    return data;
+}
+// 加权混合原料
+function mixMaterial(list){
+    let totalTon=0;
+    let sumSi=0,sumFe=0,sumCu=0,sumMn=0,sumMg=0,sumZn=0,sumCost=0;
+    for(let item of list){
+        totalTon += item.ton;
+        sumSi += item.si * item.ton;
+        sumFe += item.fe * item.ton;
+        sumCu += item.cu * item.ton;
+        sumMn += item.mn * item.ton;
+        sumMg += item.mg * item.ton;
+        sumZn += item.zn * item.ton;
+        sumCost += item.price * item.ton;
+    }
+    return {
+        totalTon,
+        avgSi: sumSi/totalTon,
+        avgFe: sumFe/totalTon,
+        avgCu: sumCu/totalTon,
+        avgMn: sumMn/totalTon,
+        avgMg: sumMg/totalTon,
+        avgZn: sumZn/totalTon,
+        avgRawCost: sumCost/totalTon
+    }
+}
+// ==========模型1新版 质量守恒配料计算==========
+function calcNewModel1(mix, gradeName, metalPrice, salePrice, lossCost, useAlDilute){
+    const g = gradeConfig[gradeName];
+    const rawT = mix.totalTon;
+    const rawSi = mix.avgSi;
+    const rawFe = mix.avgFe;
+    const rawCu = mix.avgCu;
+    const rawMn = mix.avgMn;
+    const rawMg = mix.avgMg;
+    const rawZn = mix.avgZn;
+    const rawCostPerTon = mix.avgRawCost;
+    const targetSi = g.si_min;
+    const targetCu = g.cu_min;
+    const targetMn = g.mn_min;
+    const targetMg = g.mg_min;
+    const targetFeMax = g.fe_max;
+    let Wsi=0, Wcu=0, Wmn=0, Wmg=0, Wal=0;
+    let totalMixT, newSi, newFe, newCu, newMn, newMg, newZn;
+    let avgMixCostPerTon;
+    let impurityFine = 0;
+    let fineMsg = [];
+    let addMsg = [];
+    if(useAlDilute){
+        // 启用纯铝稀释，联立方程求解 Wal，纯铝Fe=0.05%
+        const Fe0 = rawFe /100;
+        const Si0 = rawSi /100;
+        const Mn0 = rawMn /100;
+        const Mg0 = rawMg /100;
+        const Cu0 = rawCu /100;
+        const FeAl = 0.0005;
+        const tFe = targetFeMax /100;
+        const tSi = targetSi /100;
+        const tCu = targetCu ? targetCu /100 : null;
+        const tMn = targetMn ? targetMn /100 : null;
+        const tMg = targetMg ? targetMg /100 : null;
+
+        // 求解稀释需要的纯铝量 Wal
+        const denom = Fe0 - FeAl - tFe + tFe*FeAl;
+        if (Math.abs(denom) < 1e-12) {
+            throw new Error("Fe方程分母为0，无法求解纯铝稀释量，请修改化验或牌号参数");
+        }
+        Wal = rawT*(tFe - Fe0)/denom;
+        Wal = Math.max(0, Wal); // 不能负，不需要稀释则Wal=0
+        const M = rawT + Wal;
+
+        // 补Si
+        Wsi = Math.max(0, (rawT*Si0)/(1-tSi) - M*tSi/(1-tSi));
+        // 补Cu（有下限才补）
+        if(tCu !== null){
+            Wcu = Math.max(0, (rawT*Cu0)/(1-tCu) - M*tCu/(1-tCu));
+        }
+        // 补Mn
+        if(tMn !== null){
+            Wmn = Math.max(0, (rawT*Mn0)/(1-tMn) - M*tMn/(1-tMn));
+        }
+        // 补Mg
+        if(tMg !== null){
+            Wmg = Math.max(0, (rawT*Mg0)/(1-tMg) - M*tMg/(1-tMg));
+        }
+
+        const addTotal = Wal + Wsi + Wcu + Wmn + Wmg;
+        totalMixT = rawT + addTotal;
+
+        newSi = (rawT*Si0 + Wsi)/totalMixT *100;
+        newCu = (rawT*Cu0 + Wcu)/totalMixT *100;
+        newMn = (rawT*Mn0 + Wmn)/totalMixT *100;
+        newMg = (rawT*Mg0 + Wmg)/totalMixT *100;
+        newFe = (rawT*Fe0 + Wal*FeAl)/totalMixT *100;
+        newZn = rawZn * rawT / totalMixT;
+
+        // 物料成本
+        const costRaw = rawT * rawCostPerTon;
+        const costAl = Wal * metalPrice.al;
+        const costSi = Wsi * metalPrice.si;
+        const costCu = Wcu * metalPrice.cu;
+        const costMn = Wmn * metalPrice.mn;
+        const costMg = Wmg * metalPrice.mg;
+        const totalMaterialCost = costRaw + costAl + costSi + costCu + costMn + costMg;
+        avgMixCostPerTon = totalMaterialCost / totalMixT;
+        addMsg.push(`✅启用纯铝稀释配料，Fe控制到上限内，无杂质罚款`);
+        addMsg.push(`添加纯铝：${(Wal*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属硅：${(Wsi*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属铜：${(Wcu*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属锰：${(Wmn*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属镁：${(Wmg*1000).toFixed(2)} kg`);
+        fineMsg.push("✅纯铝稀释模式，Fe控制达标，不执行杂质罚款");
+    }else{
+        // 旧逻辑：只补合金，不掺纯铝
+        if(rawSi < targetSi){
+            Wsi = rawT*(targetSi/100 - rawSi/100)/(1 - targetSi/100);
+        }
+        if(targetCu!==null && rawCu < targetCu){
+            Wcu = rawT*(targetCu/100 - rawCu/100)/(1 - targetCu/100);
+        }
+        if(targetMn!==null && rawMn < targetMn){
+            Wmn = rawT*(targetMn/100 - rawMn/100)/(1 - targetMn/100);
+        }
+        if(targetMg!==null && rawMg < targetMg){
+            Wmg = rawT*(targetMg/100 - rawMg/100)/(1 - targetMg/100);
+        }
+        Wsi=Math.max(0,Wsi);
+        Wcu=Math.max(0,Wcu);
+        Wmn=Math.max(0,Wmn);
+        Wmg=Math.max(0,Wmg);
+
+        const addTotal = Wsi + Wcu + Wmn + Wmg;
+        totalMixT = rawT + addTotal;
+        newSi = (rawT*(rawSi/100)+Wsi)/totalMixT *100;
+        newCu = (rawT*(rawCu/100)+Wcu)/totalMixT *100;
+        newMn = (rawT*(rawMn/100)+Wmn)/totalMixT *100;
+        newMg = (rawT*(rawMg/100)+Wmg)/totalMixT *100;
+        newFe = rawFe;
+        newZn = rawZn;
+        const costRaw = rawT * rawCostPerTon;
+        const costSi = Wsi * metalPrice.si;
+        const costCu = Wcu * metalPrice.cu;
+        const costMn = Wmn * metalPrice.mn;
+        const costMg = Wmg * metalPrice.mg;
+        const totalMaterialCost = costRaw + costSi + costCu + costMn + costMg;
+        avgMixCostPerTon = totalMaterialCost / totalMixT;
+        // =====杂质罚款=====
+        if(newFe > g.fe_max){
+            const diff = newFe - g.fe_max;
+            const fine = diff /0.1 * g.rule.fe_over;
+            impurityFine += fine;
+            fineMsg.push(`Fe:${newFe.toFixed(3)}% > ${g.fe_max}，超标罚款 ${fine.toFixed(2)}元/吨`);
+        }
+        if(newCu > g.cu_max){
+            const diff = newCu - g.cu_max;
+            const fine = diff /0.1 * g.rule.cu_over;
+            impurityFine += fine;
+            fineMsg.push(`Cu:${newCu.toFixed(3)}% > ${g.cu_max}，超标罚款 ${fine.toFixed(2)}元/吨`);
+        }
+        if(newMn > g.mn_max){
+            const diff = newMn - g.mn_max;
+            const fine = diff /0.1 * g.rule.mn_over;
+            impurityFine += fine;
+            fineMsg.push(`Mn:${newMn.toFixed(3)}% > ${g.mn_max}，超标罚款 ${fine.toFixed(2)}元/吨`);
+        }
+        if(newMg > g.mg_max){
+            const diff = newMg - g.mg_max;
+            const fine = diff /0.1 * g.rule.mg_over;
+            impurityFine += fine;
+            fineMsg.push(`Mg:${newMg.toFixed(3)}% > ${g.mg_max}，超标罚款 ${fine.toFixed(2)}元/吨`);
+        }
+        if(newZn > g.zn_max){
+            const diff = newZn - g.zn_max;
+            const fine = diff /0.1 * g.rule.zn_over;
+            impurityFine += fine;
+            fineMsg.push(`Zn:${newZn.toFixed(3)}% > ${g.zn_max}，超标罚款 ${fine.toFixed(2)}元/吨`);
+        }
+        if(fineMsg.length===0) fineMsg.push("✅所有元素上限合格，无杂质罚款");
+        addMsg.push(`只补合金配料，不添加纯铝稀释`);
+        addMsg.push(`添加金属硅：${(Wsi*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属铜：${(Wcu*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属锰：${(Wmn*1000).toFixed(2)} kg`);
+        addMsg.push(`添加金属镁：${(Wmg*1000).toFixed(2)} kg`);
+    }
+    // 每吨毛利
+    const profitPerTon = salePrice - avgMixCostPerTon - impurityFine - lossCost;
+    return {
+        add:{Wal,Wsi,Wcu,Wmn,Wmg},
+        totalMixT,
+        comp:{newSi,newFe,newCu,newMn,newMg,newZn},
+        avgMixCostPerTon,
+        impurityFine,
+        profitPerTon,
+        fineMsg,
+        addMsg
+    }
+}
+// ==========新版模型2 废铝估值【更新Cu计价规则】==========
+function calcByMetalPrice(mix,metalPrice){
+    const pct = {
+        Si: mix.avgSi / 100,
+        Fe: mix.avgFe / 100,
+        Cu: mix.avgCu / 100,
+        Mn: mix.avgMn / 100,
+        Mg: mix.avgMg / 100,
+        Zn: mix.avgZn / 100
+    };
+    // Al基体
+    const AlPct = 1 - pct.Si - pct.Fe - pct.Cu - pct.Mn - pct.Mg - pct.Zn;
+    if(AlPct <=0) return {error:"元素总和超过100%，化验数据异常"};
+    // 分项计算价值
+    let val_Si = pct.Si * metalPrice.si;
+    let val_Al = AlPct * metalPrice.al;
+    let val_Fe = 0;
+    let val_Cu = 0;
+    let val_Mn = pct.Mn * metalPrice.al;
+    let val_Mg = pct.Mg * metalPrice.al;
+    let val_Zn = pct.Zn * metalPrice.al;
+    let impurityCost = 0;
+    const msg = [];
+    // ============【重点修改：Cu新计价逻辑】============
+    if(mix.avgCu <= 0.5){
+        val_Cu = pct.Cu * metalPrice.al;
+        msg.push(`Cu含量${mix.avgCu.toFixed(3)}% ≤0.5%，全部Cu按铝价计价`);
+    }else{
+        val_Cu = pct.Cu * metalPrice.cu;
+        msg.push(`Cu含量${mix.avgCu.toFixed(3)}% >0.5%，全部Cu按电解铜价计价（阈值触发，整批铜切换铜价）`);
+    }
+    // Fe原有逻辑保持不变
+    const feBase = 0.5;
+    if(mix.avgFe > feBase){
+        val_Fe = feBase / 100 * metalPrice.al; // 0.5%这部分铁按铝价计价
+        const excessFe = mix.avgFe - feBase;
+        const c = excessFe /0.1 * 80;
+        impurityCost += c;
+        msg.push(`Fe>${feBase}%：0.5%铁按铝价计价，超出${excessFe.toFixed(3)}%，折价：${c.toFixed(2)}元/吨`);
+    }else{
+        val_Fe = pct.Fe * metalPrice.al;
+        msg.push(`Fe含量${mix.avgFe.toFixed(3)}%，在基准0.5%以内，全部Fe组分按铝价计价，无Fe折价`);
+    }
+    msg.push(`Mn/Mg/Zn仅参与价值核算，不产生精炼扣费`);
+    let metalVal = val_Si + val_Al + val_Fe + val_Cu + val_Mn + val_Mg + val_Zn;
+    const finalValue = metalVal - impurityCost;
+    return {
+        AlPct:AlPct.toFixed(2),
+        metalValue:metalVal.toFixed(2),
+        impurityCost:impurityCost.toFixed(2),
+        wasteAlValue:finalValue.toFixed(2),
+        msg:msg
+    }
+}
+// 模型1按钮
+document.getElementById("calcBtn").onclick=()=>{
+    try{
+        const target=document.getElementById("targetGrade").value;
+        const priceMap={
+            ADC12:parseFloat(document.getElementById("p_adc12").value),
+            A356:parseFloat(document.getElementById("p_a356").value),
+            ZL102:parseFloat(document.getElementById("p_zl102").value),
+            ZL104:parseFloat(document.getElementById("p_zl104").value),
+            ZL107:parseFloat(document.getElementById("p_zl107").value),
+            ZL111:parseFloat(document.getElementById("p_zl111").value),
+        };
+        const metalPrice = {
+            al:parseFloat(document.getElementById("p_al").value),
+            si:parseFloat(document.getElementById("p_si").value),
+            cu:parseFloat(document.getElementById("p_cu").value),
+            mg:parseFloat(document.getElementById("p_mg").value),
+            zn:parseFloat(document.getElementById("p_zn").value),
+            mn:parseFloat(document.getElementById("p_mn").value),
+        };
+        const loss=parseFloat(document.getElementById("loss_cost").value);
+        const useAlDilute = document.getElementById("useAlDilute").checked;
+        const list=getRow();
+        if(list.length===0){document.getElementById("result").textContent="⚠️请勾选至少一份原料！";return;}
+        const mix=mixMaterial(list);
+        const salePrice=priceMap[target];
+        if(isNaN(salePrice)){document.getElementById("result").textContent="⚠️请填入目标牌号市场售价";return;}
+        if(isNaN(metalPrice.al)){document.getElementById("result").textContent="⚠️请填写A00铝价格";return;}
+        const res=calcNewModel1(mix,target,metalPrice,salePrice,loss,useAlDilute);
+        let out=`====【模型1新版｜质量守恒配料】====
+原始原料总重：${mix.totalTon.toFixed(3)}吨
+原始成分：
+Si:${mix.avgSi.toFixed(3)}% | Fe:${mix.avgFe.toFixed(3)}%
+Cu:${mix.avgCu.toFixed(3)}% | Mn:${mix.avgMn.toFixed(3)}%
+Mg:${mix.avgMg.toFixed(3)}% | Zn:${mix.avgZn.toFixed(3)}%
+----------配料方案----------
+${res.addMsg.join("\n")}
+配料后总混合料：${res.totalMixT.toFixed(3)} 吨
+----------配料完成后混合料成分----------
+Si:${res.comp.newSi.toFixed(3)}% | Fe:${res.comp.newFe.toFixed(3)}%
+Cu:${res.comp.newCu.toFixed(3)}% | Mn:${res.comp.newMn.toFixed(3)}%
+Mg:${res.comp.newMg.toFixed(3)}% | Zn:${res.comp.newZn.toFixed(3)}%
+----------成本明细（按混合料每吨）----------
+混合原料加权成本：${res.avgMixCostPerTon.toFixed(2)} 元/吨
+杂质超标罚款：${res.impurityFine.toFixed(2)} 元/吨
+熔炼损耗：${loss} 元/吨
+目标牌号成品售价：${salePrice} 元/吨
+👉每吨毛利：${res.profitPerTon.toFixed(2)} 元/吨
+----------罚款明细----------
+${res.fineMsg.join("\n")}
+`;
+        document.getElementById("result").textContent=out;
+    }catch(e){
+        document.getElementById("result").textContent="❌计算异常："+e.message;
+    }
+}
+// 模型2按钮
+document.getElementById("calcMetalBtn").onclick=()=>{
+    const metalPrice = {
+        al:parseFloat(document.getElementById("p_al").value),
+        si:parseFloat(document.getElementById("p_si").value),
+        cu:parseFloat(document.getElementById("p_cu").value),
+        mg:parseFloat(document.getElementById("p_mg").value),
+        zn:parseFloat(document.getElementById("p_zn").value),
+        mn:parseFloat(document.getElementById("p_mn").value),
+    };
+    const list=getRow();
+    if(list.length===0){document.getElementById("resultMetal").textContent="⚠️请勾选至少一份原料！";return;}
+    if(isNaN(metalPrice.al)){document.getElementById("resultMetal").textContent="⚠️请填入A00铝价格";return;}
+    const mix=mixMaterial(list);
+    const res=calcByMetalPrice(mix,metalPrice);
+    if(res.error){
+        document.getElementById("resultMetal").textContent=res.error;
+        return;
+    }
+    let out=`====【模型2 A00金属基准测算｜废铝原料估值｜新计价规则】====
+混合料加权成分：
+Si:${mix.avgSi.toFixed(3)}% | Fe:${mix.avgFe.toFixed(3)}%
+Cu:${mix.avgCu.toFixed(3)}% | Mn:${mix.avgMn.toFixed(3)}%
+Mg:${mix.avgMg.toFixed(3)}% | Zn:${mix.avgZn.toFixed(3)}%
+估算基体Al含量：${res.AlPct}%
+金属物料总价值：${res.metalValue}元/吨
+杂质精炼总扣费：${res.impurityCost}元/吨
+✅废铝理论价值：${res.wasteAlValue}元/吨
+>模型2计价规则说明：
+>Si按金属硅价；Cu≤0.5%全部铜按铝价，Cu>0.5%全部铜按电解铜价；
+>Fe≤0.5%全部Fe按铝价；Fe>0.5%时0.5%部分按铝价，超出部分每0.1%罚80元/吨
+>Mn/Mg/Zn仅参与价值核算，不产生精炼扣费
+扣费明细：
+${res.msg.join("\n")}
+`;
+    document.getElementById("resultMetal").textContent=out;
+}
+// 添加原料行
+document.getElementById("addRow").onclick=()=>{
+    const wrap=document.querySelector(".card:nth-child(3)");
+    const div=document.createElement("div");
+    div.className="row";
+    div.innerHTML=`
+<input type="checkbox" class="use">
+<input class="ton" placeholder="吨">
+<input class="si" placeholder="Si%">
+<input class="fe" placeholder="Fe%">
+<input class="cu" placeholder="Cu%">
+<input class="mn" placeholder="Mn%">
+<input class="mg" placeholder="Mg%">
+<input class="zn" placeholder="Zn%">
+<input class="price" placeholder="元/吨">
+`;
+    wrap.appendChild(div);
+}
+document.getElementById("clear").onclick=()=>{
+    document.getElementById("result").textContent="";
+    document.getElementById("resultMetal").textContent="";
+}
+</script>
+</body>
+</html>
